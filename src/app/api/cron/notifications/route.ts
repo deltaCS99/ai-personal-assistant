@@ -16,25 +16,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const now = new Date();
-    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    
     // Find users due for notifications
     const morningUsers = await prisma.user.findMany({
       where: {
-        enableMorningNotification: true,
-        morningNotificationTime: {
-          startsWith: currentTime.substring(0, 4)
-        }
+        enableMorningNotification: true
       }
     });
 
     const eveningUsers = await prisma.user.findMany({
       where: {
         enableEveningNotification: true,
-        eveningNotificationTime: {
-          startsWith: currentTime.substring(0, 4)
-        }
       }
     });
 

@@ -923,7 +923,7 @@ export class SalesService extends BaseAIService {
 
   private async queryLeads(userId: string, originalMessage: string) {
     const message = originalMessage.toLowerCase();
-    let whereCondition: any = { userId };
+    const whereCondition: any = { userId };
     let queryType = 'all';
 
     if (message.includes('today')) {

@@ -376,7 +376,7 @@ export class NotificationService {
   private async calculateActiveWeekStreak(userId: string): Promise<number> {
     // Simple implementation - count consecutive weeks with activity
     let streak = 0;
-    let currentWeekStart = startOfDay(new Date());
+    const currentWeekStart = startOfDay(new Date());
     
     for (let week = 0; week < 12; week++) { // Check last 12 weeks
       const weekStart = new Date(currentWeekStart.getTime() - (week * 7 * 24 * 60 * 60 * 1000));

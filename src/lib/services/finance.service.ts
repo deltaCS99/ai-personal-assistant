@@ -128,16 +128,16 @@ export class FinanceService extends BaseAIService {
       /^update\s+\d+$/i,
       /^(show|details|info)\s*\d*$/i
     ];
-    
+
     const trimmedMessage = message.trim();
-    
-    return confirmationPatterns.some(pattern => pattern.test(trimmedMessage)) && 
-           trimmedMessage.length < 20;
+
+    return confirmationPatterns.some(pattern => pattern.test(trimmedMessage)) &&
+      trimmedMessage.length < 20;
   }
 
   private async handleConfirmation(userId: string, message: string): Promise<string> {
     const pendingConfirmation = await ConfirmationService.getPendingConfirmation(userId, 'finance');
-    
+
     if (!pendingConfirmation) {
       return await this.processNormalMessage(userId, message);
     }
@@ -230,29 +230,29 @@ export class FinanceService extends BaseAIService {
   private async getFinancialHealthMetrics(userId: string) {
     const [totalAssets, totalLiabilities, investments, emergencyFund, transactionCount, monthlyIncome] = await Promise.all([
       prisma.account.aggregate({
-        where: { 
-          userId, 
+        where: {
+          userId,
           type: { in: ['Asset', 'Investment', 'Emergency Fund'] }
         },
         _sum: { currentBalance: true }
       }),
-      
+
       prisma.account.aggregate({
         where: { userId, type: 'Liability' },
         _sum: { currentBalance: true }
       }),
-      
+
       prisma.account.aggregate({
         where: { userId, type: 'Investment' },
         _sum: { currentBalance: true }
       }),
-      
+
       prisma.account.findFirst({
         where: { userId, type: 'Emergency Fund' }
       }),
-      
+
       prisma.transaction.count({ where: { userId } }),
-      
+
       this.getMonthlyIncome(userId)
     ]);
 
@@ -261,7 +261,7 @@ export class FinanceService extends BaseAIService {
     const netWorth = assets - liabilities;
     const investmentValue = investments._sum.currentBalance || 0;
     const emergencyFundValue = emergencyFund?.currentBalance || 0;
-    
+
     return {
       netWorth,
       totalAssets: assets,
@@ -300,27 +300,39 @@ export class FinanceService extends BaseAIService {
     }
   }
 
-  // 🎯 AI-driven progress detection
   private async handleConversation(userId: string, update: FinanceUpdate, originalMessage: string) {
     const progressPrompt = `
-    Analyze this user message and determine if they are asking for a financial progress report, financial health analysis, or financial metrics.
+  Analyze this user message and determine if they are asking for a GENERAL financial progress report or financial health analysis.
 
-    User message: "${originalMessage}"
+  User message: "${originalMessage}"
 
-    Return JSON:
-    {
-      "isProgressRequest": true/false,
-      "confidence": 0.0-1.0,
-      "reasoning": "why this is or isn't a progress request"
-    }
+  Return JSON:
+  {
+    "isProgressRequest": true/false,
+    "confidence": 0.0-1.0,
+    "reasoning": "why this is or isn't a progress request"
+  }
 
-    Progress request indicators:
-    - Asking about financial performance, results, health, progress
-    - Questions about how they're doing financially
-    - Requests for financial reports, analysis, or net worth
-    - Questions about savings rate, wealth building, or Babylon principles
-    - Mentions of progress, performance, metrics in financial context
-    `;
+  ONLY return true for GENERAL progress requests like:
+  - "How am I doing financially?"
+  - "Show me my financial progress"
+  - "Give me a financial health report"
+  - "What's my financial performance?"
+  - "How's my savings rate?"
+  - "Show me my net worth analysis"
+  - "Financial progress report"
+
+  NEVER return true if the message:
+  - Mentions specific transaction descriptions or amounts
+  - Contains "should I" or "should we" about specific actions
+  - Asks about specific spending or transactions
+  - Is about individual transaction management
+  - Contains specific financial decisions or advice requests
+  - Asks about particular expenses or purchases
+
+  The message "${originalMessage}" mentions specific financial actions or decisions, so be very careful.
+  Return false unless it's clearly asking for OVERALL financial performance metrics.
+  `;
 
     try {
       const progressAnalysis = await this.processAIRequest<{
@@ -339,7 +351,8 @@ export class FinanceService extends BaseAIService {
         'FinanceProgressDetection'
       );
 
-      if (progressAnalysis.isProgressRequest && progressAnalysis.confidence > 0.7) {
+      // 🎯 STRICTER: Higher confidence threshold
+      if (progressAnalysis.isProgressRequest && progressAnalysis.confidence > 0.95) {
         return await this.generateProgressReport(userId);
       }
     } catch (error) {
@@ -347,7 +360,7 @@ export class FinanceService extends BaseAIService {
     }
 
     const summary = await this.getFinancialSummary(userId);
-    
+
     return {
       action: 'conversation',
       response: update.contextualOpening || "I'm here to help with your finances!",
@@ -365,7 +378,7 @@ export class FinanceService extends BaseAIService {
 
   private async generateProgressReport(userId: string) {
     const progressData = await this.gatherFinancialProgressData(userId);
-    
+
     const prompt = PromptFactory.getFinanceProgressPrompt(this.getProviderName());
     const context = JSON.stringify(progressData, null, 2);
 
@@ -451,7 +464,7 @@ export class FinanceService extends BaseAIService {
             },
             _sum: { amount: true }
           }),
-          
+
           prisma.transaction.aggregate({
             where: {
               userId,
@@ -464,7 +477,7 @@ export class FinanceService extends BaseAIService {
 
         const monthlyIncome = income._sum.amount || 0;
         const monthlyExpenses = Math.abs(expenses._sum.amount || 0);
-        
+
         return {
           month,
           income: monthlyIncome,
@@ -480,8 +493,8 @@ export class FinanceService extends BaseAIService {
 
   private async getSavingsGoalProgress(userId: string) {
     const accounts = await prisma.account.findMany({
-      where: { 
-        userId, 
+      where: {
+        userId,
         targetAmount: { not: null },
         type: { in: ['Asset', 'Emergency Fund', 'Investment'] }
       }
@@ -508,7 +521,7 @@ export class FinanceService extends BaseAIService {
 
   private async getAverageMonthlySavings(userId: string): Promise<number> {
     const last3Months = subMonths(new Date(), 3);
-    
+
     const [income, expenses] = await Promise.all([
       prisma.transaction.aggregate({
         where: {
@@ -518,7 +531,7 @@ export class FinanceService extends BaseAIService {
         },
         _sum: { amount: true }
       }),
-      
+
       prisma.transaction.aggregate({
         where: {
           userId,
@@ -531,13 +544,13 @@ export class FinanceService extends BaseAIService {
 
     const totalIncome = income._sum.amount || 0;
     const totalExpenses = Math.abs(expenses._sum.amount || 0);
-    
+
     return (totalIncome - totalExpenses) / 3;
   }
 
   private async getExpenseBreakdown(userId: string) {
     const lastMonth = subMonths(new Date(), 1);
-    
+
     const expenses = await prisma.transaction.groupBy({
       by: ['category'],
       where: {
@@ -559,7 +572,7 @@ export class FinanceService extends BaseAIService {
 
   private async getIncomeStability(userId: string) {
     const last6Months = Array.from({ length: 6 }, (_, i) => subMonths(new Date(), i));
-    
+
     const incomeByMonth = await Promise.all(
       last6Months.map(async (month) => {
         const income = await prisma.transaction.aggregate({
@@ -573,7 +586,7 @@ export class FinanceService extends BaseAIService {
           },
           _sum: { amount: true }
         });
-        
+
         return income._sum.amount || 0;
       })
     );
@@ -593,13 +606,13 @@ export class FinanceService extends BaseAIService {
 
   private calculateIncomeTrend(incomes: number[]): 'increasing' | 'decreasing' | 'stable' {
     if (incomes.length < 2) return 'stable';
-    
+
     const recentAvg = incomes.slice(0, 3).reduce((sum, income) => sum + income, 0) / 3;
     const olderAvg = incomes.slice(3).reduce((sum, income) => sum + income, 0) / (incomes.length - 3);
-    
+
     if (olderAvg === 0) return 'stable';
     const change = (recentAvg - olderAvg) / olderAvg;
-    
+
     if (change > 0.1) return 'increasing';
     if (change < -0.1) return 'decreasing';
     return 'stable';
@@ -611,7 +624,7 @@ export class FinanceService extends BaseAIService {
     });
 
     const totalInvestmentValue = investments.reduce((sum, inv) => sum + inv.currentBalance, 0);
-    
+
     return {
       totalValue: totalInvestmentValue,
       accounts: investments.length,
@@ -658,7 +671,7 @@ export class FinanceService extends BaseAIService {
   private async calculateCurrentSavingsRate(userId: string): Promise<number> {
     const monthlyIncome = await this.getMonthlyIncome(userId);
     const monthlyExpenses = await this.getMonthlyExpenses(userId);
-    
+
     return monthlyIncome > 0 ? ((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100 : 0;
   }
 
@@ -666,7 +679,7 @@ export class FinanceService extends BaseAIService {
     const emergencyFund = await prisma.account.findFirst({
       where: { userId, type: 'Emergency Fund' }
     });
-    
+
     const monthlyExpenses = await this.getMonthlyExpenses(userId);
     return emergencyFund ? emergencyFund.currentBalance >= (monthlyExpenses * 3) : false;
   }
@@ -675,7 +688,7 @@ export class FinanceService extends BaseAIService {
     const investments = await prisma.account.count({
       where: { userId, type: 'Investment', currentBalance: { gt: 0 } }
     });
-    
+
     return investments > 0;
   }
 
@@ -695,7 +708,7 @@ export class FinanceService extends BaseAIService {
   private async getIncomeGrowthRate(userId: string): Promise<number> {
     const currentMonth = await this.getMonthlyIncome(userId);
     const lastMonth = await this.getIncomeForMonth(userId, subMonths(new Date(), 1));
-    
+
     return lastMonth > 0 ? ((currentMonth - lastMonth) / lastMonth) * 100 : 0;
   }
 
@@ -718,11 +731,11 @@ export class FinanceService extends BaseAIService {
   private async getExpenseControlScore(userId: string): Promise<number> {
     const last3MonthsExpenses = await this.getExpensesForLastMonths(userId, 3);
     const previousExpenses = await this.getExpensesForLastMonths(userId, 6, 3);
-    
+
     if (previousExpenses === 0) return 50;
-    
+
     const changeRate = ((last3MonthsExpenses - previousExpenses) / previousExpenses) * 100;
-    
+
     return Math.max(0, 100 - Math.max(0, changeRate));
   }
 
@@ -737,7 +750,7 @@ export class FinanceService extends BaseAIService {
   private async getExpensesForLastMonths(userId: string, months: number, offset: number = 0): Promise<number> {
     const startDate = subMonths(new Date(), months + offset);
     const endDate = offset > 0 ? subMonths(new Date(), offset) : new Date();
-    
+
     const expenses = await prisma.transaction.aggregate({
       where: {
         userId,
@@ -843,7 +856,7 @@ export class FinanceService extends BaseAIService {
     context += `Amount: R${newTransaction.amount}\n`;
     context += `Category: ${newTransaction.category}\n`;
     context += `Date: ${newTransaction.date || 'today'}\n`;
-    
+
     context += `\nRECENT TRANSACTIONS (last 14 days):\n`;
     recentTransactions.forEach((transaction, index) => {
       const date = format(new Date(transaction.createdAt), 'yyyy-MM-dd');
@@ -851,7 +864,7 @@ export class FinanceService extends BaseAIService {
     });
 
     const prompt = PromptFactory.getFinanceDuplicateDetectionPrompt(this.getProviderName());
-    
+
     try {
       const detection = await this.processAIRequest<DuplicateDetection>(
         prompt,
@@ -885,7 +898,7 @@ export class FinanceService extends BaseAIService {
 
     if (duplicateCheck.result === 'DUPLICATE' && duplicateCheck.matchedTransaction) {
       const similarTransactions = await this.findSimilarTransactions(userId, duplicateCheck.matchedTransaction);
-      
+
       await ConfirmationService.storePendingConfirmation(userId, 'finance', {
         type: 'transaction_duplicate',
         proposedTransaction: {
@@ -919,10 +932,10 @@ export class FinanceService extends BaseAIService {
       },
     });
 
-    return { 
-      action: 'add_transaction', 
+    return {
+      action: 'add_transaction',
       transaction,
-      duplicateCheck 
+      duplicateCheck
     };
   }
 
@@ -931,17 +944,17 @@ export class FinanceService extends BaseAIService {
     message += `I found a similar transaction: **${duplicateCheck.matchedTransaction}**\n`;
     message += `📊 Confidence: ${Math.round(duplicateCheck.confidence * 100)}%\n`;
     message += `💭 Reasoning: ${duplicateCheck.reasoning}\n\n`;
-    
+
     message += `**What you wanted to add:**\n`;
     message += `💰 **${proposedTransaction?.description}** R${proposedTransaction?.amount}\n`;
     message += `📁 Category: ${proposedTransaction?.category}\n`;
-    
+
     message += `\n**What would you like to do?**\n`;
     message += `• Reply **"yes"** - Add as new transaction anyway\n`;
     message += `• Reply **"update"** - Update the existing transaction instead\n`;
     message += `• Reply **"show"** - Show me more details about the existing transaction\n`;
     message += `• Reply **"cancel"** - Cancel this action`;
-    
+
     return message;
   }
 
@@ -957,18 +970,18 @@ export class FinanceService extends BaseAIService {
   }
 
   private async executePendingAction(
-    userId: string, 
-    action: 'add_new' | 'update_existing', 
-    pendingConfirmation: any, 
+    userId: string,
+    action: 'add_new' | 'update_existing',
+    pendingConfirmation: any,
     targetIndex?: number
   ): Promise<string> {
     try {
       const { proposedTransaction, similarTransactions, duplicateCheck } = pendingConfirmation;
-      
+
       if (!proposedTransaction) {
         return "❌ Invalid confirmation data. Please try again.";
       }
-      
+
       if (action === 'add_new') {
         const transaction = await prisma.transaction.create({
           data: {
@@ -982,14 +995,14 @@ export class FinanceService extends BaseAIService {
         });
 
         await ConfirmationService.clearPendingConfirmation(userId, 'finance');
-        
+
         return `✅ **Added new transaction: ${transaction.description}** R${transaction.amount}\n\n💡 *You chose to add as separate from similar transaction*`;
-        
+
       } else if (action === 'update_existing') {
         if (!similarTransactions || similarTransactions.length === 0) {
           return "❌ No similar transactions found to update.";
         }
-        
+
         const targetTransaction = similarTransactions[targetIndex || 0];
         if (!targetTransaction) {
           return "❌ Could not find the transaction to update. Please try again.";
@@ -1007,12 +1020,12 @@ export class FinanceService extends BaseAIService {
         });
 
         await ConfirmationService.clearPendingConfirmation(userId, 'finance');
-        
+
         return `✅ **Updated existing transaction: ${updatedTransaction.description}** R${updatedTransaction.amount}\n\n💡 *Merged with previous transaction as requested*`;
       }
 
       return "❌ Unknown action. Please try again.";
-      
+
     } catch (error) {
       await ConfirmationService.clearPendingConfirmation(userId, 'finance');
       return "❌ Something went wrong. Please try adding the transaction again.";
@@ -1021,30 +1034,30 @@ export class FinanceService extends BaseAIService {
 
   private async showTransactionDetails(userId: string, pendingConfirmation: any, targetIndex: number): Promise<string> {
     const { similarTransactions } = pendingConfirmation;
-    
+
     if (!similarTransactions || similarTransactions.length === 0) {
       return "❌ No similar transactions found.";
     }
-    
+
     const targetTransaction = similarTransactions[targetIndex];
     if (!targetTransaction) {
       return "❌ Could not find transaction details.";
     }
 
     const date = new Date(targetTransaction.createdAt).toLocaleDateString();
-    
+
     let response = `💰 **Transaction Details:**\n`;
     response += `• Description: ${targetTransaction.description}\n`;
     response += `• Amount: R${targetTransaction.amount}\n`;
     response += `• Category: ${targetTransaction.category}\n`;
     response += `• Date: ${date}\n`;
-    
+
     if (targetTransaction.babylonPrinciple) {
       response += `• Babylon Principle: ${targetTransaction.babylonPrinciple}\n`;
     }
 
     response += `\n💭 *Reply with 'update' to merge with this transaction, or 'yes' to add separately*`;
-    
+
     return response;
   }
 
@@ -1262,9 +1275,9 @@ export class FinanceService extends BaseAIService {
 
   private formatFinanceProgressResponse(result: any): string {
     const { report, rawData } = result;
-    
+
     let response = `💰 **Financial Health Report**\n\n`;
-    
+
     // Babylon Score
     response += `🏛️ **Babylon Principles Score: ${rawData.babylonScore.overallScore}%**\n`;
     if (rawData.babylonScore.strengths.length > 0) {
@@ -1274,14 +1287,14 @@ export class FinanceService extends BaseAIService {
       response += `🎯 Areas to improve: ${rawData.babylonScore.improvements.join(', ')}\n`;
     }
     response += `\n`;
-    
+
     // Financial Snapshot
     response += `📊 **Financial Snapshot:**\n`;
     response += `• Net Worth: R${rawData.snapshot.netWorth.toLocaleString()}\n`;
     response += `• Assets: R${rawData.snapshot.totalAssets.toLocaleString()}\n`;
     response += `• Emergency Fund: ${rawData.snapshot.emergencyFundMonths} months coverage\n`;
     response += `• Investment Allocation: ${rawData.snapshot.investmentPercentage}%\n\n`;
-    
+
     // Savings Trend
     const latestTrend = rawData.trends[rawData.trends.length - 1];
     if (latestTrend) {
@@ -1291,7 +1304,7 @@ export class FinanceService extends BaseAIService {
       response += `• Savings: R${latestTrend.savings.toLocaleString()}\n`;
       response += `• Savings Rate: ${latestTrend.savingsRate}%\n\n`;
     }
-    
+
     // Goal Progress
     if (rawData.goals.length > 0) {
       response += `🎯 **Savings Goals Progress:**\n`;
@@ -1300,7 +1313,7 @@ export class FinanceService extends BaseAIService {
       });
       response += `\n`;
     }
-    
+
     // AI Insights
     if (report.insights?.length > 0) {
       response += `🧠 **Key Insights:**\n`;
@@ -1309,7 +1322,7 @@ export class FinanceService extends BaseAIService {
       });
       response += `\n`;
     }
-    
+
     // Recommendations
     if (report.recommendations?.length > 0) {
       response += `💡 **Recommendations:**\n`;
@@ -1320,13 +1333,13 @@ export class FinanceService extends BaseAIService {
       });
       response += `\n`;
     }
-    
+
     return response;
   }
 
   private formatAddTransactionResponse(result: any, update: FinanceUpdate): string {
     let response = update.contextualOpening || '';
-    
+
     if (result.transaction) {
       response += `\n\n💰 **Transaction recorded**: ${result.transaction.description} R${result.transaction.amount}`;
       if (result.transaction.category) {
@@ -1355,7 +1368,7 @@ export class FinanceService extends BaseAIService {
       } else if (result.userData.savingsRate < 5) {
         response += `\n\n💪 *There's room to improve your savings rate. The Babylonians recommend saving at least 10%.*`;
       }
-      
+
       if (result.userData.netWorth > 0) {
         response += `\n\n💎 *Your positive net worth of R${result.userData.netWorth.toLocaleString()} shows good financial health!*`;
       }
@@ -1366,7 +1379,7 @@ export class FinanceService extends BaseAIService {
 
   private formatUpdateAccountResponse(result: any, update: FinanceUpdate): string {
     let response = update.contextualOpening || '';
-    
+
     if (result.account) {
       response += `\n\n🏦 **Account updated**: ${result.account.name}`;
       if (result.account.currentBalance !== undefined) {
@@ -1383,7 +1396,7 @@ export class FinanceService extends BaseAIService {
 
   private formatFinanceSummaryResponse(result: any, update: FinanceUpdate): string {
     let response = update.contextualOpening || '';
-    
+
     response += `\n\n📈 **Financial Summary:**
 • Net Worth: R${result.netWorth.toLocaleString()}
 • Monthly Income: R${result.monthlyIncome.toLocaleString()}
@@ -1391,7 +1404,7 @@ export class FinanceService extends BaseAIService {
 • Savings Rate: ${result.savingsRate}%
 • Active Goals: ${result.goalProgress?.length || 0}
 • Total Transactions: ${result.totalTransactions}`;
-        
+
     if (result.accounts?.length > 0) {
       response += `\n\n💳 **Accounts:**`;
       result.accounts.forEach((account: any) => {
@@ -1404,7 +1417,7 @@ export class FinanceService extends BaseAIService {
 
   private formatDefaultResponse(result: any, update: FinanceUpdate): string {
     let response = update.contextualOpening || '';
-    
+
     switch (result.action) {
       case 'delete_transaction':
         response += `\n\n🗑️ **Transaction deleted**: ${result.transaction?.description}`;

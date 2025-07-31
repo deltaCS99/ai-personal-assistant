@@ -83,13 +83,13 @@ export class SalesService extends BaseAIService {
       /^(update|use existing|\d+)$/i,
       /^(show|details|info)\s*(\d+)?$/i
     ];
-    
+
     return confirmationPatterns.some(pattern => pattern.test(message.trim()));
   }
 
   private async handleConfirmation(userId: string, message: string): Promise<string> {
     const pendingConfirmation = await ConfirmationService.getPendingConfirmation(userId, 'sales');
-    
+
     if (!pendingConfirmation) {
       return "I don't have any pending confirmations. What would you like to do?";
     }
@@ -177,7 +177,7 @@ export class SalesService extends BaseAIService {
 
   private async getRecentActivity(userId: string) {
     const sevenDaysAgo = subDays(new Date(), 7);
-    
+
     const [leadsCreated, leadsUpdated, followupsCompleted] = await Promise.all([
       prisma.lead.count({
         where: {
@@ -234,27 +234,37 @@ export class SalesService extends BaseAIService {
     }
   }
 
-  // 🎯 ENHANCED: AI-driven progress detection (no hardcoded patterns)
   private async handleConversation(userId: string, update: LeadUpdate, originalMessage: string) {
-    // Let AI determine if this is a progress request by analyzing the message content
     const progressPrompt = `
-    Analyze this user message and determine if they are asking for a progress report, performance analysis, or sales metrics.
+Analyze this user message and determine if they are asking for a GENERAL sales progress report or performance analysis.
 
-    User message: "${originalMessage}"
+User message: "${originalMessage}"
 
-    Return JSON:
-    {
-      "isProgressRequest": true/false,
-      "confidence": 0.0-1.0,
-      "reasoning": "why this is or isn't a progress request"
-    }
+Return JSON:
+{
+  "isProgressRequest": true/false,
+  "confidence": 0.0-1.0,
+  "reasoning": "why this is or isn't a progress request"
+}
 
-    Progress request indicators:
-    - Asking about performance, results, metrics, progress, analysis
-    - Questions about how they're doing with sales
-    - Requests for reports or summaries of activity
-    - Questions about pipeline health or conversion rates
-    `;
+ONLY return true for GENERAL progress requests like:
+- "How am I doing with sales?"
+- "Show me my performance" 
+- "Give me a progress report"
+- "How's my pipeline performing?"
+- "What are my conversion rates?"
+- "Show me my sales metrics"
+
+NEVER return true if the message:
+- Mentions specific names (like "Maryna", "John", "ABC Corp")
+- Contains "should we" or "should I" about specific actions
+- Asks about marking leads as lost/won
+- Is about individual lead management
+- Contains "check on [name]" or similar
+
+The message "${originalMessage}" mentions specific leads or actions, so be very careful.
+Return false unless it's clearly asking for OVERALL performance metrics.
+`;
 
     try {
       const progressAnalysis = await this.processAIRequest<{
@@ -274,7 +284,7 @@ export class SalesService extends BaseAIService {
       );
 
       // If AI is confident this is a progress request, generate report
-      if (progressAnalysis.isProgressRequest && progressAnalysis.confidence > 0.7) {
+      if (progressAnalysis.isProgressRequest && progressAnalysis.confidence > 0.95) {
         return await this.generateProgressReport(userId);
       }
     } catch (error) {
@@ -304,7 +314,7 @@ export class SalesService extends BaseAIService {
 
   private async generateProgressReport(userId: string) {
     const progressData = await this.gatherProgressData(userId);
-    
+
     const prompt = PromptFactory.getSalesProgressPrompt(this.getProviderName());
     const context = JSON.stringify(progressData, null, 2);
 
@@ -395,7 +405,7 @@ export class SalesService extends BaseAIService {
 
   private async calculateConversionMetrics(userId: string) {
     const totalLeads = await prisma.lead.count({ where: { userId } });
-    
+
     if (totalLeads === 0) {
       return { contactedRate: 0, replyRate: 0, interestRate: 0, winRate: 0 };
     }
@@ -417,7 +427,7 @@ export class SalesService extends BaseAIService {
 
   private async calculateActivityMetrics(userId: string) {
     const lastWeek = subWeeks(new Date(), 1);
-    
+
     const [updatesThisWeek, followupsScheduled, overdueFollowups] = await Promise.all([
       prisma.lead.count({
         where: {
@@ -454,9 +464,9 @@ export class SalesService extends BaseAIService {
   }
 
   private async calculateFollowupHealth(userId: string) {
-    const totalLeads = await prisma.lead.count({ 
-      where: { 
-        userId, 
+    const totalLeads = await prisma.lead.count({
+      where: {
+        userId,
         status: { notIn: ['Closed - Won', 'Closed - Lost'] }
       }
     });
@@ -484,7 +494,7 @@ export class SalesService extends BaseAIService {
     ]);
 
     const estimatedValue = (interested * 1000 * 0.3) + (proposals * 1000 * 0.6) + (negotiations * 1000 * 0.8);
-    
+
     return {
       interested,
       proposals,
@@ -566,7 +576,7 @@ export class SalesService extends BaseAIService {
     let context = `NEW LEAD TO CHECK:\n`;
     context += `Name: "${newLeadName}"\n`;
     if (newLeadPhone) context += `Phone: "${newLeadPhone}"\n`;
-    
+
     context += `\nEXISTING LEADS:\n`;
     existingLeads.forEach((lead, index) => {
       context += `${index + 1}. "${lead.name}"`;
@@ -575,7 +585,7 @@ export class SalesService extends BaseAIService {
     });
 
     const prompt = PromptFactory.getSalesDuplicateDetectionPrompt(this.getProviderName());
-    
+
     try {
       const detection = await this.processAIRequest<DuplicateDetection>(
         prompt,
@@ -628,7 +638,7 @@ export class SalesService extends BaseAIService {
 
     if (duplicateCheck.result === 'DUPLICATE' && duplicateCheck.matchedLead) {
       const similarLeads = await this.findSimilarLeadsByName(userId, duplicateCheck.matchedLead);
-      
+
       await ConfirmationService.storePendingConfirmation(userId, 'sales', {
         type: 'duplicate_detected',
         proposedLead: { name, ...updates },
@@ -660,47 +670,47 @@ export class SalesService extends BaseAIService {
       },
     });
 
-    return { 
-      action: 'create', 
-      lead, 
+    return {
+      action: 'create',
+      lead,
       wasExisting: false,
       duplicateCheck
     };
   }
 
-  private formatDuplicateConfirmation(duplicateCheck: DuplicateDetection, proposedLead: { name: string; [key: string]: any }): string {
+  private formatDuplicateConfirmation(duplicateCheck: DuplicateDetection, proposedLead: { name: string;[key: string]: any }): string {
     let message = `🤔 **Potential Duplicate Detected!**\n\n`;
     message += `I found a similar lead: **${duplicateCheck.matchedLead}**\n`;
     message += `📊 Confidence: ${Math.round(duplicateCheck.confidence * 100)}%\n`;
     message += `💭 Reasoning: ${duplicateCheck.reasoning}\n\n`;
-    
+
     message += `**What you wanted to add:**\n`;
     message += `✨ **${proposedLead.name}**\n`;
     if (proposedLead.phone) message += `📞 ${proposedLead.phone}\n`;
     if (proposedLead.status) message += `📊 ${proposedLead.status}\n`;
-    
+
     message += `\n**What would you like to do?**\n`;
     message += `• Reply **"yes"** - Create as new lead anyway\n`;
     message += `• Reply **"update"** - Update the existing lead instead\n`;
     message += `• Reply **"show"** - Show me more details about the existing lead\n`;
     message += `• Reply **"cancel"** - Cancel this action`;
-    
+
     return message;
   }
 
   private async executePendingAction(
-    userId: string, 
-    action: 'create_new' | 'update_existing', 
-    pendingConfirmation: PendingConfirmation, 
+    userId: string,
+    action: 'create_new' | 'update_existing',
+    pendingConfirmation: PendingConfirmation,
     targetIndex?: number
   ): Promise<string> {
     try {
       const { proposedLead, similarLeads, duplicateCheck } = pendingConfirmation;
-      
+
       if (!proposedLead) {
         return "❌ Invalid confirmation data. Please try again.";
       }
-      
+
       if (action === 'create_new') {
         const lead = await prisma.lead.create({
           data: {
@@ -718,14 +728,14 @@ export class SalesService extends BaseAIService {
         });
 
         await ConfirmationService.clearPendingConfirmation(userId, 'sales');
-        
+
         return `✅ **Created new lead for ${lead.name}**\n\n💡 *You chose to create as separate from ${duplicateCheck.matchedLead}*`;
-        
+
       } else if (action === 'update_existing') {
         if (!similarLeads || similarLeads.length === 0) {
           return "❌ No similar leads found to update.";
         }
-        
+
         const targetLead = similarLeads[targetIndex || 0];
         if (!targetLead) {
           return "❌ Could not find the lead to update. Please try again.";
@@ -758,12 +768,12 @@ export class SalesService extends BaseAIService {
         });
 
         await ConfirmationService.clearPendingConfirmation(userId, 'sales');
-        
+
         return `✅ **Updated existing lead for ${updatedLead.name}**\n\n💡 *Combined with previous lead as you requested*`;
       }
 
       return "❌ Unknown action. Please try again.";
-      
+
     } catch (error) {
       await ConfirmationService.clearPendingConfirmation(userId, 'sales');
       return "❌ Something went wrong. Please try adding the lead again.";
@@ -772,11 +782,11 @@ export class SalesService extends BaseAIService {
 
   private async showLeadDetails(userId: string, pendingConfirmation: PendingConfirmation, targetIndex: number): Promise<string> {
     const { similarLeads } = pendingConfirmation;
-    
+
     if (!similarLeads || similarLeads.length === 0) {
       return "❌ No similar leads found.";
     }
-    
+
     const targetLead = similarLeads[targetIndex];
     if (!targetLead) {
       return "❌ Could not find lead details.";
@@ -790,8 +800,8 @@ export class SalesService extends BaseAIService {
       return "❌ Could not find lead details.";
     }
 
-    return this.formatViewResponse({ lead: fullLead }) + 
-           `\n\n💭 *Reply with 'update' to merge with this lead, or 'yes' to create separately*`;
+    return this.formatViewResponse({ lead: fullLead }) +
+      `\n\n💭 *Reply with 'update' to merge with this lead, or 'yes' to create separately*`;
   }
 
   private async findSimilarLeadsByName(userId: string, name: string) {
@@ -1016,22 +1026,22 @@ export class SalesService extends BaseAIService {
 
   private formatProgressResponse(result: any): string {
     const { report, rawData } = result;
-    
+
     let response = `📊 **Sales Progress Report**\n\n`;
-    
+
     // Overview metrics
     response += `📈 **Pipeline Overview:**\n`;
     response += `• Total leads: ${rawData.overview.totalLeads}\n`;
     response += `• This month: ${rawData.overview.leadsThisMonth}\n`;
     response += `• Growth rate: ${rawData.overview.growthRate}%\n\n`;
-    
+
     // Conversion metrics
     response += `🎯 **Conversion Rates:**\n`;
     response += `• Contact rate: ${rawData.conversionMetrics.contactedRate}%\n`;
     response += `• Reply rate: ${rawData.conversionMetrics.replyRate}%\n`;
     response += `• Interest rate: ${rawData.conversionMetrics.interestRate}%\n`;
     response += `• Win rate: ${rawData.conversionMetrics.winRate}%\n\n`;
-    
+
     // Activity score
     response += `⚡ **Activity Score:** ${rawData.activityMetrics.activityScore}\n`;
     response += `• Updates this week: ${rawData.activityMetrics.updatesThisWeek}\n`;
@@ -1040,7 +1050,7 @@ export class SalesService extends BaseAIService {
       response += `• ⚠️ Overdue follow-ups: ${rawData.activityMetrics.overdueFollowups}\n`;
     }
     response += `\n`;
-    
+
     // AI insights
     if (report.insights?.length > 0) {
       response += `🧠 **Key Insights:**\n`;
@@ -1049,7 +1059,7 @@ export class SalesService extends BaseAIService {
       });
       response += `\n`;
     }
-    
+
     // Recommendations
     if (report.recommendations?.length > 0) {
       response += `💡 **Recommendations:**\n`;
@@ -1060,7 +1070,7 @@ export class SalesService extends BaseAIService {
       });
       response += `\n`;
     }
-    
+
     // Trends
     if (report.trends?.positive?.length > 0) {
       response += `✅ **What's Working:**\n`;
@@ -1069,7 +1079,7 @@ export class SalesService extends BaseAIService {
       });
       response += `\n`;
     }
-    
+
     if (report.trends?.concerning?.length > 0) {
       response += `⚠️ **Areas for Improvement:**\n`;
       report.trends.concerning.forEach((trend: string) => {
@@ -1077,7 +1087,7 @@ export class SalesService extends BaseAIService {
       });
       response += `\n`;
     }
-    
+
     return response;
   }
 

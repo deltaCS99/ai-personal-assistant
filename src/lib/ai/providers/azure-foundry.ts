@@ -1,5 +1,5 @@
 // ===============================
-// src/lib/ai/providers/azure-foundry.ts
+// src/lib/ai/providers/azure-foundry.ts - FIXED WITH JSON MODE
 // ===============================
 import { BaseAIProvider } from './base';
 import { AzureOpenAI } from 'openai';
@@ -14,7 +14,7 @@ export class AzureFoundryProvider extends BaseAIProvider {
     const endpoint = process.env.AZURE_FOUNDRY_ENDPOINT!;
     const apiVersion = process.env.AZURE_FOUNDRY_API_VERSION || '2024-04-01-preview';
 
-    this.deploymentName = deploymentName || 'gpt-4o-mini';
+    this.deploymentName = deploymentName || 'gpt-4o';
 
     this.client = new AzureOpenAI({
       apiKey,
@@ -36,8 +36,11 @@ export class AzureFoundryProvider extends BaseAIProvider {
           { role: 'user', content: userPrompt }
         ],
         max_tokens: 2000,
-        temperature: 0.7,
-        top_p: 0.95
+        temperature: 0.1,
+        top_p: 0.95,
+        response_format: { 
+          type: "json_object" 
+        }
       });
 
       return response.choices[0].message?.content ?? '';

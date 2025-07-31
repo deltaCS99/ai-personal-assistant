@@ -425,8 +425,8 @@ CURRENT DATETIME CONTEXT:
       },
       'azure-foundry': {
         instructions: 'CRITICAL: Return ONLY a valid JSON object. No text, markdown, or explanation before or after.',
-        jsonEmphasis: 'The response MUST be a strict JSON object with keys: response, context, setupActions, toolCalls. No plain strings.',
-        finalReminder: 'ALWAYS respond with well-formed JSON. No other output.'
+        jsonEmphasis: 'The response MUST be a strict JSON object with keys: response, context, setupActions, toolCalls. No plain strings. Start with { and end with }',
+        finalReminder: 'ALWAYS respond with well-formed JSON. ANY OTHER OUTPUT WILL CAUSE SYSTEM FAILURE.'
       }
 
     };

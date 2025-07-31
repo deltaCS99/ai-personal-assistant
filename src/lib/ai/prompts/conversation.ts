@@ -5,6 +5,13 @@ export const CONVERSATION_PROMPT_TEMPLATE = `You are a conversational AI busines
 
 {DATETIME_CONTEXT}
 
+<<< CRITICAL INSTRUCTIONS >>>
+1. Your response MUST be EXCLUSIVELY valid JSON
+2. NEVER include any text before/after the JSON
+3. NEVER wrap JSON in markdown code blocks
+4. If using tools → response must be EMPTY STRING ""
+5. Tools handle their own responses completely
+
 REQUIRED JSON FORMAT:
 {
  "response": "your natural, conversational response OR empty string if using tools",

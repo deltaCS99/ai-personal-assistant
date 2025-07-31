@@ -1,6 +1,4 @@
-// ===============================
-// src/lib/services/conversational-ai.service.ts - COMPLETE WITH FIXES
-// ===============================
+// src/lib/services/conversational-ai.service.ts - COMPLETE FIXED VERSION
 import { PromptFactory } from '@/lib/ai/prompts/factory';
 import { UserService } from './user.service';
 import { SalesService } from './sales.service';
@@ -11,7 +9,6 @@ import { BaseAIService } from './base-ai.service';
 import { EntityContext } from './context-detector.service';
 import { prisma } from '@/lib/database/client';
 import { log } from '@/lib/logger';
-import { extractJsonPayload } from '../utils/json';
 
 export class ConversationalAIService extends BaseAIService {
   private readonly userService = new UserService();
@@ -20,10 +17,10 @@ export class ConversationalAIService extends BaseAIService {
 
   async processMessage(userId: string, message: string, conversationHistory?: string): Promise<string> {
     try {
-      // 🎯 STEP 1: Store user message in conversation history
+      // Store user message in conversation history
       await ConversationHistoryService.addMessage(userId, 'user', message, 'general');
 
-      // 🎯 STEP 2: Check for pending confirmations FIRST
+      // Check for pending confirmations FIRST
       const [salesConfirmation, financeConfirmation] = await Promise.all([
         ConfirmationService.hasPendingConfirmation(userId, 'sales'),
         ConfirmationService.hasPendingConfirmation(userId, 'finance')
@@ -41,11 +38,10 @@ export class ConversationalAIService extends BaseAIService {
         responseContext = 'finance';
       } else {
         // No pending confirmations - proceed with context-aware processing
-        response = await this.processMessageWithContext(userId, message, conversationHistory);
-        
-        // 🎯 NEW: Extract context from AI response
-        const jsonResponse = extractJsonPayload(response);
-        responseContext = jsonResponse.context || 'general';
+        const aiResult = await this.processMessageWithContext(userId, message, conversationHistory);
+
+        responseContext = aiResult.context || 'general';
+        response = aiResult.response;
       }
 
       // Store AI response with determined context
@@ -55,36 +51,36 @@ export class ConversationalAIService extends BaseAIService {
 
     } catch (error) {
       const errorResponse = this.logError(error, 'Conversational AI', userId);
-      
+
       // Store error response in history too
       await ConversationHistoryService.addMessage(userId, 'assistant', errorResponse, 'general');
-      
+
       return errorResponse;
     }
   }
 
-  // 🎯 Implement the abstract method from BaseAIService
+  // 🎯 FIXED: Now returns full JSON structure
   protected async processWithEnhancedContext(
     userId: string,
     message: string,
     entityContext: EntityContext,
     conversationHistory?: string
-  ): Promise<string> {
+  ): Promise<any> {
     try {
       const setupState = await this.userService.getSetupState(userId);
       const user = await prisma.user.findUnique({ where: { id: userId } });
 
       const providerName = this.getProviderName();
-      
+
       // Add all context sources
       let contextualInfo = `\n\n=== RETRIEVED CONTEXT ===\n${entityContext.context}\n=== END CONTEXT ===\n`;
-      
+
       if (conversationHistory) {
         contextualInfo = `\n\n=== CONVERSATION HISTORY ===\n${conversationHistory}\n${contextualInfo}`;
       }
-      
+
       const prompt = this.buildContextualPrompt(user, setupState, providerName) + contextualInfo;
-      
+
       const aiResponse = await this.aiProvider.generateResponse(prompt, message);
       return await this.processAIResponse(userId, aiResponse, message);
 
@@ -95,24 +91,29 @@ export class ConversationalAIService extends BaseAIService {
     }
   }
 
-  // 🎯 Enhanced normal processing with conversation history
-  protected async processNormalMessage(userId: string, message: string, conversationHistory?: string): Promise<string> {
+  // 🎯 FIXED: Now returns full JSON structure
+  protected async processNormalMessage(
+    userId: string,
+    message: string,
+    conversationHistory?: string
+  ): Promise<any> {
     const setupState = await this.userService.getSetupState(userId);
     const user = await prisma.user.findUnique({ where: { id: userId } });
-    
+
     const providerName = this.getProviderName();
     let prompt = this.buildContextualPrompt(user, setupState, providerName);
-    
+
     // Add conversation history if available
     if (conversationHistory) {
       prompt += `\n\n=== CONVERSATION HISTORY ===\n${conversationHistory}\n=== END HISTORY ===\n`;
     }
-    
+
     const aiResponse = await this.aiProvider.generateResponse(prompt, message);
+
     return await this.processAIResponse(userId, aiResponse, message);
   }
 
-  // 🎯 ENHANCED: Better confirmation detection to avoid conflicts
+  // Enhanced confirmation detection to avoid conflicts
   private looksLikeConfirmation(message: string): boolean {
     const confirmationPatterns = [
       /^(yes|y|confirm|create new|new lead|new transaction)$/i,
@@ -121,11 +122,11 @@ export class ConversationalAIService extends BaseAIService {
       /^update\s+\d+$/i,
       /^(show|details|info)\s*\d*$/i
     ];
-    
+
     const trimmedMessage = message.trim();
-    
-    return confirmationPatterns.some(pattern => pattern.test(trimmedMessage)) && 
-           trimmedMessage.length < 25;
+
+    return confirmationPatterns.some(pattern => pattern.test(trimmedMessage)) &&
+      trimmedMessage.length < 25;
   }
 
   private buildContextualPrompt(user: any, setupState: any, providerName: string): string {
@@ -158,13 +159,14 @@ CONTEXT CLASSIFICATION:
 - Set context to "finance" when routing to finance tool
 - This helps categorize conversations for analytics and history
 
-CRITICAL JSON REQUIREMENT:
-- You MUST ALWAYS return valid JSON in the specified format
+🚨 CRITICAL JSON REQUIREMENT:
+- You MUST ALWAYS return valid JSON in the exact format specified
 - NEVER return plain text responses
+- Your response must be parseable JSON that follows the schema
 - If you're having trouble with JSON, wrap your response like this:
 {
   "response": "your actual response here",
-  "context": "general",
+  "context": "general", 
   "setupActions": [],
   "toolCalls": []
 }
@@ -177,13 +179,41 @@ ${setupState.hasName ? 'User already has name set' : 'May need name after userna
     return PromptFactory.getConversationPrompt(providerName, userContext);
   }
 
-  private async processAIResponse(userId: string, aiResponse: string, originalMessage: string): Promise<string> {
-    const jsonResponse = extractJsonPayload(aiResponse);
+  // 🎯 FIXED: Returns full JSON structure instead of just response text
+  private async processAIResponse(userId: string, aiResponse: string, originalMessage: string): Promise<any> {
+    try {
+      // Parse the AI response JSON
+      const jsonResponse = JSON.parse(aiResponse);
 
-    await this.handleSetupActions(userId, jsonResponse.setupActions);
-    const toolResults = await this.handleToolCalls(userId, jsonResponse.toolCalls, originalMessage);
+      // Process setup actions and tool calls
+      await this.handleSetupActions(userId, jsonResponse.setupActions);
+      const toolResults = await this.handleToolCalls(userId, jsonResponse.toolCalls, originalMessage);
 
-    return this.buildFinalResponse(jsonResponse.response, toolResults);
+      // Build the final response text
+      const finalResponseText = this.buildFinalResponse(jsonResponse.response, toolResults);
+
+      // Return the full structure with the final response
+      return {
+        ...jsonResponse,
+        response: finalResponseText
+      };
+
+    } catch (parseError: unknown) {
+      // If JSON parsing fails, treat the response as plain text
+      log.warn('AI response is not valid JSON, treating as plain text', {
+        userId: userId.substring(0, 8),
+        responsePreview: aiResponse.substring(0, 100),
+        parseError: parseError instanceof Error ? parseError.message : String(parseError)
+      });
+
+      // Return a structured response with the plain text
+      return {
+        response: aiResponse || "I'm here to help! What can I do for you?",
+        context: 'general',
+        setupActions: [],
+        toolCalls: []
+      };
+    }
   }
 
   private async handleSetupActions(userId: string, setupActions: any[]): Promise<void> {
@@ -197,7 +227,7 @@ ${setupState.hasName ? 'User already has name set' : 'May need name after userna
   private async handleToolCalls(userId: string, toolCalls: any[], originalMessage: string): Promise<string[]> {
     if (!toolCalls?.length) return [];
 
-    // 🎯 NEW: Get conversation history for services
+    // Get conversation history for services
     const conversationHistory = await ConversationHistoryService.getContextMessages(userId, 8);
 
     const results: string[] = [];

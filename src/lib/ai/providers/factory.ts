@@ -52,7 +52,7 @@ export class AIProviderFactory {
     const provider = (process.env.CONTEXT_DETECTION_PROVIDER as AIConfig['provider']) || 
                      (process.env.AI_PROVIDER as AIConfig['provider']) || 
                      'azure-foundry';
-    const model = process.env.CONTEXT_DETECTION_MODEL || 'gpt-4o-mini';
+    const model = process.env.CONTEXT_DETECTION_MODEL || 'gpt-4o';
     return this.create({ provider, model });
   }
 }

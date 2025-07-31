@@ -1,9 +1,6 @@
-// ===============================
-// src/lib/services/base-ai.service.ts - COMPLETE UPDATED VERSION
-// ===============================
+// src/lib/services/base-ai.service.ts - UPDATED WITH CORRECT RETURN TYPES
 import { AIProviderFactory } from '@/lib/ai/providers/factory';
 import { ContextDetectorService, EntityContext } from './context-detector.service';
-import { extractJsonPayload } from '@/lib/utils/json';
 import { log } from '@/lib/logger';
 
 export abstract class BaseAIService {
@@ -17,28 +14,29 @@ export abstract class BaseAIService {
     if (provider.includes('Gemini')) return 'gemini';
     if (provider.includes('Claude')) return 'claude';
     if (provider.includes('OpenAI') || provider.includes('GPT')) return 'openai';
+    if (provider.includes('Foundry')) return 'azure-foundry';
     return 'gemini';
   }
-  
-  // 🎯 UPDATED: Now supports conversation history
+
+  // 🎯 UPDATED: Now returns structured data instead of string
   protected async processMessageWithContext(
-    userId: string, 
-    message: string, 
+    userId: string,
+    message: string,
     conversationHistory?: string
-  ): Promise<string> {
+  ): Promise<any> {
     try {
       // Step 1: AI-driven context detection (fast, cheap call)
       const entityContext = await this.contextDetector.detectAndRetrieveContext(userId, message);
-      
+
       // Step 2: Process with enhanced context if needed
       if (entityContext.type !== 'none') {
-        log.info('Context detected and retrieved', { 
-          userId: userId.substring(0, 8), 
-          entityType: entityContext.type, 
-          entityName: entityContext.entityName 
+        log.info('Context detected and retrieved', {
+          userId: userId.substring(0, 8),
+          entityType: entityContext.type,
+          entityName: entityContext.entityName
         });
-        
-        // 🎯 UPDATED: Pass conversation history to enhanced context processing
+
+        // Pass conversation history to enhanced context processing
         return await this.processWithEnhancedContext(userId, message, entityContext, conversationHistory);
       } else {
         // Normal processing without entity context but with conversation history
@@ -46,31 +44,31 @@ export abstract class BaseAIService {
         return await this.processNormalMessage(userId, message, conversationHistory);
       }
     } catch (error) {
-      log.error('Context-aware message processing failed, falling back to normal processing', { 
-        error, 
-        userId: userId.substring(0, 8) 
+      log.error('Context-aware message processing failed, falling back to normal processing', {
+        error,
+        userId: userId.substring(0, 8)
       });
       // Graceful fallback to normal processing with conversation history
       return await this.processNormalMessage(userId, message, conversationHistory);
     }
   }
 
-  // 🎯 UPDATED: Enhanced context processing with conversation history
+  // 🎯 UPDATED: Now returns structured data (any) instead of string
   protected abstract processWithEnhancedContext(
-    userId: string, 
-    message: string, 
+    userId: string,
+    message: string,
     entityContext: EntityContext,
     conversationHistory?: string
-  ): Promise<string>;
+  ): Promise<any>;
 
-  // 🎯 NEW: Normal message processing with conversation history
+  // 🎯 UPDATED: Now returns structured data (any) instead of string  
   protected abstract processNormalMessage(
-    userId: string, 
-    message: string, 
+    userId: string,
+    message: string,
     conversationHistory?: string
-  ): Promise<string>;
+  ): Promise<any>;
 
-  // 🎯 UPDATED: Main process message method with conversation history support
+  // 🎯 Main process message method still returns string (the final response text)
   abstract processMessage(userId: string, message: string, conversationHistory?: string): Promise<string>;
 
   protected async processAIRequest<T>(
@@ -84,12 +82,12 @@ export abstract class BaseAIService {
 
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        log.info(`Processing ${serviceType} message (attempt ${attempt})`, { 
-          userId: userId.substring(0, 8) 
+        log.info(`Processing ${serviceType} message (attempt ${attempt})`, {
+          userId: userId.substring(0, 8)
         });
 
         const aiResponse = await this.aiProvider.generateResponse(prompt, message);
-        const parsedResponse = extractJsonPayload(aiResponse);
+        const parsedResponse = JSON.parse(aiResponse);
         const validatedData = schema.parse(parsedResponse);
 
         log.info(`${serviceType} message processed successfully`, {
@@ -102,15 +100,15 @@ export abstract class BaseAIService {
 
       } catch (error: any) {
         lastError = error;
-        
+
         // Check if this is a retryable error
         if (this.isRetryableError(error) && attempt < this.maxRetries) {
-          log.warn(`${serviceType} attempt ${attempt} failed, retrying...`, { 
+          log.warn(`${serviceType} attempt ${attempt} failed, retrying...`, {
             userId: userId.substring(0, 8),
             error: error.message,
             nextAttempt: attempt + 1
           });
-          
+
           // Wait before retrying
           await this.sleep(this.retryDelay * attempt);
           continue;
@@ -127,7 +125,7 @@ export abstract class BaseAIService {
 
   private isRetryableError(error: any): boolean {
     const errorMessage = error.message?.toLowerCase() || '';
-    
+
     // Retryable errors
     return (
       errorMessage.includes('503') ||           // Service unavailable
@@ -151,20 +149,20 @@ export abstract class BaseAIService {
 
   private getFriendlyErrorMessage(error: any, context: string): string {
     const errorMessage = error.message?.toLowerCase() || '';
-    
+
     // Specific error handling for different scenarios
     if (errorMessage.includes('503') || errorMessage.includes('overloaded')) {
       return this.getOverloadedMessage(context);
     }
-    
+
     if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
       return this.getRateLimitMessage(context);
     }
-    
+
     if (errorMessage.includes('timeout')) {
       return this.getTimeoutMessage(context);
     }
-    
+
     if (errorMessage.includes('network') || errorMessage.includes('connection')) {
       return this.getNetworkMessage(context);
     }
@@ -181,7 +179,7 @@ export abstract class BaseAIService {
       "🏃‍♂️ I'm running as fast as my circuits can carry me, but there's a queue! Like Black Friday for AI requests! 🛍️",
       "🤯 My AI buddy is pulling an all-nighter and needs a power nap. Even smart computers get tired! 😴"
     ];
-    
+
     return this.getRandomMessage(messages);
   }
 
@@ -193,7 +191,7 @@ export abstract class BaseAIService {
       "📈 I'm more popular than I thought! Hit my request limit. Success is exhausting! 💪",
       "⏰ Even I have office hours! Looks like I need to clock out for a minute. Union rules! 👔"
     ];
-    
+
     return this.getRandomMessage(messages);
   }
 
@@ -205,7 +203,7 @@ export abstract class BaseAIService {
       "⏳ Time got away from me! I was probably calculating the meaning of life (it's still 42, btw). 🤖",
       "🕰️ Oops, I took a scenic route through the data! Back on track now, ready for round two! 🗺️"
     ];
-    
+
     return this.getRandomMessage(messages);
   }
 
@@ -217,7 +215,7 @@ export abstract class BaseAIService {
       "🛰️ Houston, we have a connection problem! But don't worry, I'm not floating away! 🚀",
       "🔗 My connection is more unstable than my emotions after watching a sad movie! 🎬"
     ];
-    
+
     return this.getRandomMessage(messages);
   }
 
@@ -229,7 +227,7 @@ export abstract class BaseAIService {
       "🎪 Well, that was an unexpected plot twist! Let me reread the script and try again! 📜",
       "🎲 That was a critical fail on my AI dice roll! Rolling again with better luck! 🍀"
     ];
-    
+
     return this.getRandomMessage(messages);
   }
 

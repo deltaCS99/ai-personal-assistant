@@ -5,7 +5,7 @@ import { BaseAIProvider } from './base';
 import { AzureOpenAI } from 'openai';
 
 export class AzureFoundryProvider extends BaseAIProvider {
-  name = 'azure-foundry';
+  name = 'Azure Foundry';
   private readonly client: AzureOpenAI;
   private readonly deploymentName: string;
 
@@ -25,6 +25,10 @@ export class AzureFoundryProvider extends BaseAIProvider {
   }
 
   async generateResponse(prompt: string, userMessage: string): Promise<string> {
+    console.debug("Azure Foundry Request:", {
+      systemPrompt: prompt.substring(0, 300) + (prompt.length > 300 ? "..." : ""),
+      userMessage
+    });
     try {
       const systemPrompt = this.formatSystemMessage(prompt);
       const userPrompt = this.formatUserMessage(userMessage);
@@ -38,10 +42,11 @@ export class AzureFoundryProvider extends BaseAIProvider {
         max_tokens: 2000,
         temperature: 0.1,
         top_p: 0.95,
-        response_format: { 
-          type: "json_object" 
+        response_format: {
+          type: "json_object"
         }
       });
+      console.debug("Azure Foundry Response:", JSON.stringify(response, null, 2));
 
       return response.choices[0].message?.content ?? '';
     } catch (error) {

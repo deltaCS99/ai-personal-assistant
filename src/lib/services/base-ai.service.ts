@@ -1,12 +1,14 @@
 // ===============================
-// src/lib/services/base-ai.service.ts - UPDATED with Friendly Error Handling
+// src/lib/services/base-ai.service.ts - COMPLETE UPDATED VERSION
 // ===============================
 import { AIProviderFactory } from '@/lib/ai/providers/factory';
+import { ContextDetectorService, EntityContext } from './context-detector.service';
 import { extractJsonPayload } from '@/lib/utils/json';
 import { log } from '@/lib/logger';
 
 export abstract class BaseAIService {
   protected readonly aiProvider = AIProviderFactory.createFromEnv();
+  private readonly contextDetector = new ContextDetectorService();
   private readonly maxRetries = 2;
   private readonly retryDelay = 1000; // 1 second
 
@@ -17,6 +19,59 @@ export abstract class BaseAIService {
     if (provider.includes('OpenAI') || provider.includes('GPT')) return 'openai';
     return 'gemini';
   }
+  
+  // 🎯 UPDATED: Now supports conversation history
+  protected async processMessageWithContext(
+    userId: string, 
+    message: string, 
+    conversationHistory?: string
+  ): Promise<string> {
+    try {
+      // Step 1: AI-driven context detection (fast, cheap call)
+      const entityContext = await this.contextDetector.detectAndRetrieveContext(userId, message);
+      
+      // Step 2: Process with enhanced context if needed
+      if (entityContext.type !== 'none') {
+        log.info('Context detected and retrieved', { 
+          userId: userId.substring(0, 8), 
+          entityType: entityContext.type, 
+          entityName: entityContext.entityName 
+        });
+        
+        // 🎯 UPDATED: Pass conversation history to enhanced context processing
+        return await this.processWithEnhancedContext(userId, message, entityContext, conversationHistory);
+      } else {
+        // Normal processing without entity context but with conversation history
+        log.info('No entity context needed, processing normally', { userId: userId.substring(0, 8) });
+        return await this.processNormalMessage(userId, message, conversationHistory);
+      }
+    } catch (error) {
+      log.error('Context-aware message processing failed, falling back to normal processing', { 
+        error, 
+        userId: userId.substring(0, 8) 
+      });
+      // Graceful fallback to normal processing with conversation history
+      return await this.processNormalMessage(userId, message, conversationHistory);
+    }
+  }
+
+  // 🎯 UPDATED: Enhanced context processing with conversation history
+  protected abstract processWithEnhancedContext(
+    userId: string, 
+    message: string, 
+    entityContext: EntityContext,
+    conversationHistory?: string
+  ): Promise<string>;
+
+  // 🎯 NEW: Normal message processing with conversation history
+  protected abstract processNormalMessage(
+    userId: string, 
+    message: string, 
+    conversationHistory?: string
+  ): Promise<string>;
+
+  // 🎯 UPDATED: Main process message method with conversation history support
+  abstract processMessage(userId: string, message: string, conversationHistory?: string): Promise<string>;
 
   protected async processAIRequest<T>(
     prompt: string,

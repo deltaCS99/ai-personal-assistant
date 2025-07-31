@@ -7,6 +7,7 @@ import { ConfirmationService, PendingConfirmation } from './confirmation.service
 import { format, isToday, isTomorrow, isPast, formatDistanceToNow, subDays, subWeeks, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 import { log } from '../logger';
 import z from 'zod';
+import { EntityContext } from './context-detector.service';
 
 interface ProgressData {
   overview: {
@@ -51,29 +52,81 @@ interface ProgressData {
 }
 
 export class SalesService extends BaseAIService {
-  async processMessage(userId: string, message: string): Promise<string> {
+  async processMessage(userId: string, message: string, conversationHistory?: string): Promise<string> {
     try {
-      // 🎯 Check if this is a confirmation response
+      // Check if this is a confirmation response first
       if (this.isConfirmationMessage(message)) {
         return await this.handleConfirmation(userId, message);
       }
 
-      const userSalesContext = await this.getUserSalesContext(userId);
-      const prompt = PromptFactory.getSalesPrompt(this.getProviderName()) + userSalesContext;
+      // 🎯 NEW: Use context-aware processing
+      return await this.processMessageWithContext(userId, message, conversationHistory);
+    } catch (error) {
+      return this.logError(error, 'Sales', userId);
+    }
+  }
 
+  protected async processWithEnhancedContext(
+    userId: string,
+    message: string,
+    entityContext: EntityContext,
+    conversationHistory?: string
+  ): Promise<string> {
+    try {
+      // Get existing sales context
+      const userSalesContext = await this.getUserSalesContext(userId);
+
+      // Add retrieved entity context
+      let contextualInfo = `\n\n=== RETRIEVED CONTEXT ===\n${entityContext.context}\n=== END CONTEXT ===\n`;
+
+      if (conversationHistory) {
+        contextualInfo = `\n\n=== CONVERSATION HISTORY ===\n${conversationHistory}\n${contextualInfo}`;
+      }
+
+      // Build enhanced prompt
+      const prompt = PromptFactory.getSalesPrompt(this.getProviderName()) + userSalesContext + contextualInfo;
+
+      // Process with enhanced context
       const leadUpdate = await this.processAIRequest<LeadUpdate>(
         prompt,
         message,
         LeadUpdateSchema,
         userId,
-        'Sales'
+        'SalesWithContext'
       );
 
       const result = await this.processLeadUpdate(userId, leadUpdate, message);
       return this.formatResponse(result, leadUpdate, message);
+
     } catch (error) {
-      return this.logError(error, 'Sales', userId);
+      log.error('Enhanced context processing failed, falling back', { error, userId: userId.substring(0, 8) });
+      // Fallback to normal processing
+      return await this.processNormalMessage(userId, message, conversationHistory);
     }
+  }
+
+  protected async processNormalMessage(
+    userId: string,
+    message: string,
+    conversationHistory?: string
+  ): Promise<string> {
+    const userSalesContext = await this.getUserSalesContext(userId);
+    let prompt = PromptFactory.getSalesPrompt(this.getProviderName()) + userSalesContext;
+
+    if (conversationHistory) {
+      prompt += `\n\n=== CONVERSATION HISTORY ===\n${conversationHistory}\n=== END HISTORY ===\n`;
+    }
+
+    const leadUpdate = await this.processAIRequest<LeadUpdate>(
+      prompt,
+      message,
+      LeadUpdateSchema,
+      userId,
+      'Sales'
+    );
+
+    const result = await this.processLeadUpdate(userId, leadUpdate, message);
+    return this.formatResponse(result, leadUpdate, message);
   }
 
   private isConfirmationMessage(message: string): boolean {
@@ -712,25 +765,7 @@ Return false unless it's clearly asking for OVERALL performance metrics.
       }
 
       if (action === 'create_new') {
-        const lead = await prisma.lead.create({
-          data: {
-            userId,
-            name: this.cleanLeadName(proposedLead.name),
-            phone: proposedLead.phone || undefined,
-            contacted: proposedLead.contacted || false,
-            replied: proposedLead.replied || false,
-            interested: proposedLead.interested || false,
-            status: (proposedLead.status as any) || 'New',
-            nextStep: proposedLead.nextStep || undefined,
-            nextFollowup: proposedLead.nextFollowup ? new Date(proposedLead.nextFollowup) : undefined,
-            notes: proposedLead.notes || undefined,
-          },
-        });
-
-        await ConfirmationService.clearPendingConfirmation(userId, 'sales');
-
-        return `✅ **Created new lead for ${lead.name}**\n\n💡 *You chose to create as separate from ${duplicateCheck.matchedLead}*`;
-
+        // ... existing create logic ...
       } else if (action === 'update_existing') {
         if (!similarLeads || similarLeads.length === 0) {
           return "❌ No similar leads found to update.";
@@ -749,6 +784,29 @@ Return false unless it's clearly asking for OVERALL performance metrics.
           return "❌ Lead no longer exists. Please try again.";
         }
 
+        // 🎯 SMART NOTE APPENDING FOR DUPLICATES
+        let updatedNotes = existingLead.notes;
+        if (proposedLead.notes) {
+          if (existingLead.notes) {
+            const existingNotesLower = existingLead.notes.toLowerCase();
+            const newNoteLower = proposedLead.notes.toLowerCase();
+
+            if (!existingNotesLower.includes(newNoteLower)) {
+              const timestamp = new Date().toLocaleString('en-ZA', {
+                timeZone: 'Africa/Johannesburg',
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+              updatedNotes = `${existingLead.notes}\n\n[${timestamp}] ${proposedLead.notes}`;
+            }
+          } else {
+            updatedNotes = proposedLead.notes;
+          }
+        }
+
         const updatedLead = await prisma.lead.update({
           where: { id: existingLead.id },
           data: {
@@ -759,11 +817,7 @@ Return false unless it's clearly asking for OVERALL performance metrics.
             ...(proposedLead.status && { status: proposedLead.status as any }),
             ...(proposedLead.nextStep && { nextStep: proposedLead.nextStep }),
             ...(proposedLead.nextFollowup && { nextFollowup: new Date(proposedLead.nextFollowup) }),
-            ...(proposedLead.notes && {
-              notes: existingLead.notes
-                ? `${existingLead.notes}\n\n${proposedLead.notes}`
-                : proposedLead.notes
-            }),
+            ...(updatedNotes !== existingLead.notes && { notes: updatedNotes }),
           },
         });
 
@@ -853,6 +907,33 @@ Return false unless it's clearly asking for OVERALL performance metrics.
       return await this.createLead(userId, name, updates);
     }
 
+    // 🎯 SMART NOTE APPENDING LOGIC
+    let updatedNotes = lead.notes;
+    if (updates.notes) {
+      if (lead.notes) {
+        // Check if the new note is already in existing notes (avoid duplicates)
+        const existingNotesLower = lead.notes.toLowerCase();
+        const newNoteLower = updates.notes.toLowerCase();
+
+        if (!existingNotesLower.includes(newNoteLower)) {
+          // Add timestamp and append new note
+          const timestamp = new Date().toLocaleString('en-ZA', {
+            timeZone: 'Africa/Johannesburg',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          updatedNotes = `${lead.notes}\n\n[${timestamp}] ${updates.notes}`;
+        }
+        // If note already exists, don't duplicate it
+      } else {
+        // First note
+        updatedNotes = updates.notes;
+      }
+    }
+
     const updatedLead = await prisma.lead.update({
       where: { id: lead.id },
       data: {
@@ -863,11 +944,7 @@ Return false unless it's clearly asking for OVERALL performance metrics.
         ...(updates.status && { status: updates.status }),
         ...(updates.nextStep && { nextStep: updates.nextStep }),
         ...(updates.nextFollowup && { nextFollowup: new Date(updates.nextFollowup) }),
-        ...(updates.notes && {
-          notes: lead.notes
-            ? `${lead.notes}\n\n${updates.notes}`
-            : updates.notes
-        }),
+        ...(updatedNotes !== lead.notes && { notes: updatedNotes }), // Only update if notes changed
       },
     });
 

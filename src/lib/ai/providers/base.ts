@@ -19,4 +19,6 @@ export abstract class BaseAIProvider implements AIProvider {
     console.error(`AI Provider Error (${this.name}):`, error);
     throw new Error(`AI processing failed: ${error.message}`);
   }
+
+  
 }

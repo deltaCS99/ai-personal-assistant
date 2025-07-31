@@ -5,6 +5,7 @@ import { AIProvider, AIConfig } from '../types';
 import { OpenAIProvider } from './openai';
 import { ClaudeProvider } from './claude';
 import { GeminiProvider } from './gemini';
+import { AzureFoundryProvider } from './azure-foundry';
 
 export class AIProviderFactory {
   static create(config: AIConfig): AIProvider {
@@ -27,6 +28,14 @@ export class AIProviderFactory {
         const geminiKey = process.env.GEMINI_API_KEY;
         if (!geminiKey) throw new Error('GEMINI_API_KEY not found');
         return new GeminiProvider(geminiKey);
+      }      
+      
+      case 'azure-foundry': {
+        const azureKey = process.env.AZURE_FOUNDRY_API_KEY;
+        const azureEndpoint = process.env.AZURE_FOUNDRY_ENDPOINT;
+        if (!azureKey) throw new Error('AZURE_FOUNDRY_API_KEY not found');
+        if (!azureEndpoint) throw new Error('AZURE_FOUNDRY_ENDPOINT not found');
+        return new AzureFoundryProvider(azureKey, model);
       }
 
       default:
@@ -37,5 +46,13 @@ export class AIProviderFactory {
   static createFromEnv(): AIProvider {
     const provider = (process.env.AI_PROVIDER as AIConfig['provider']) || 'openai';
     return this.create({ provider });
+  }
+
+    static createContextDetectionProvider(): AIProvider {
+    const provider = (process.env.CONTEXT_DETECTION_PROVIDER as AIConfig['provider']) || 
+                     (process.env.AI_PROVIDER as AIConfig['provider']) || 
+                     'azure-foundry';
+    const model = process.env.CONTEXT_DETECTION_MODEL || 'gpt-4o-mini';
+    return this.create({ provider, model });
   }
 }

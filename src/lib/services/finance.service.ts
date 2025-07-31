@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/database/client';
 import { FinanceUpdate, FinanceUpdateSchema } from '@/lib/types/finance';
 import { DuplicateDetection, DuplicateDetectionSchema, ProgressReport, ProgressReportSchema } from '@/lib/types/common';
+import { EntityContext } from './context-detector.service';
 import { PromptFactory } from '@/lib/ai/prompts/factory';
 import { BaseAIService } from './base-ai.service';
 import { ConfirmationService } from './confirmation.service';
@@ -94,29 +95,77 @@ interface PendingFinanceConfirmation {
 }
 
 export class FinanceService extends BaseAIService {
-  async processMessage(userId: string, message: string): Promise<string> {
+  async processMessage(userId: string, message: string, conversationHistory?: string): Promise<string> {
     try {
-      // 🎯 CRITICAL: Check if this is a confirmation response first
+      // Check if this is a confirmation response first
       if (this.isConfirmationMessage(message)) {
         return await this.handleConfirmation(userId, message);
       }
 
-      const userFinancialContext = await this.getUserFinancialContext(userId);
-      const prompt = PromptFactory.getFinancePrompt(this.getProviderName()) + userFinancialContext;
+      // 🎯 NEW: Use context-aware processing
+      return await this.processMessageWithContext(userId, message, conversationHistory);
+    } catch (error) {
+      return this.logError(error, 'Finance', userId);
+    }
+  }
 
+  protected async processWithEnhancedContext(
+    userId: string,
+    message: string,
+    entityContext: EntityContext,
+    conversationHistory?: string
+  ): Promise<string> {
+    try {
+      // Get existing financial context
+      const userFinancialContext = await this.getUserFinancialContext(userId);
+
+      // Add retrieved entity context
+      let contextualInfo = `\n\n=== RETRIEVED CONTEXT ===\n${entityContext.context}\n=== END CONTEXT ===\n`;
+
+      if (conversationHistory) {
+        contextualInfo = `\n\n=== CONVERSATION HISTORY ===\n${conversationHistory}\n${contextualInfo}`;
+      }
+      // Build enhanced prompt
+      const prompt = PromptFactory.getFinancePrompt(this.getProviderName()) + userFinancialContext + contextualInfo;
+
+      // Process with enhanced context
       const financeUpdate = await this.processAIRequest<FinanceUpdate>(
         prompt,
         message,
         FinanceUpdateSchema,
         userId,
-        'Finance'
+        'FinanceWithContext'
       );
 
       const result = await this.processFinanceUpdate(userId, financeUpdate, message);
       return this.formatResponse(result, financeUpdate);
+
     } catch (error) {
-      return this.logError(error, 'Finance', userId);
+      log.error('Enhanced context processing failed, falling back', { error, userId: userId.substring(0, 8) });
+      // Fallback to normal processing
+      return await this.processNormalMessage(userId, message, conversationHistory);
     }
+  }
+
+  protected async processNormalMessage(userId: string, message: string, conversationHistory?: string): Promise<string> {
+    const userFinancialContext = await this.getUserFinancialContext(userId);
+    let prompt = PromptFactory.getFinancePrompt(this.getProviderName()) + userFinancialContext;
+
+    // 🎯 NEW: Add conversation history to prompt
+    if (conversationHistory) {
+      prompt += `\n\n=== CONVERSATION HISTORY ===\n${conversationHistory}\n=== END HISTORY ===\n`;
+    }
+
+    const financeUpdate = await this.processAIRequest<FinanceUpdate>(
+      prompt,
+      message,
+      FinanceUpdateSchema,
+      userId,
+      'Finance'
+    );
+
+    const result = await this.processFinanceUpdate(userId, financeUpdate, message);
+    return this.formatResponse(result, financeUpdate);
   }
 
   // 🎯 ENHANCED: More specific confirmation detection
@@ -160,22 +209,6 @@ export class FinanceService extends BaseAIService {
     } else {
       return await this.processNormalMessage(userId, message);
     }
-  }
-
-  private async processNormalMessage(userId: string, message: string): Promise<string> {
-    const userFinancialContext = await this.getUserFinancialContext(userId);
-    const prompt = PromptFactory.getFinancePrompt(this.getProviderName()) + userFinancialContext;
-
-    const financeUpdate = await this.processAIRequest<FinanceUpdate>(
-      prompt,
-      message,
-      FinanceUpdateSchema,
-      userId,
-      'Finance'
-    );
-
-    const result = await this.processFinanceUpdate(userId, financeUpdate, message);
-    return this.formatResponse(result, financeUpdate);
   }
 
   private async getUserFinancialContext(userId: string): Promise<string> {

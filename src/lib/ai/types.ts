@@ -7,7 +7,7 @@ export interface AIProvider {
 }
 
 export interface AIConfig {
-  provider: 'openai' | 'claude' | 'gemini';
+  provider: 'openai' | 'claude' | 'gemini'| 'azure-foundry';
   model?: string;
   temperature?: number;
   maxTokens?: number;

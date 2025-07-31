@@ -6,7 +6,9 @@ import { UserService } from './user.service';
 import { SalesService } from './sales.service';
 import { FinanceService } from './finance.service';
 import { ConfirmationService } from './confirmation.service';
+import { ConversationHistoryService } from './conversation-history.service';
 import { BaseAIService } from './base-ai.service';
+import { EntityContext } from './context-detector.service';
 import { prisma } from '@/lib/database/client';
 import { log } from '@/lib/logger';
 import { extractJsonPayload } from '../utils/json';
@@ -16,35 +18,95 @@ export class ConversationalAIService extends BaseAIService {
   private readonly salesService = new SalesService();
   private readonly financeService = new FinanceService();
 
-  async processMessage(userId: string, message: string): Promise<string> {
+  async processMessage(userId: string, message: string, conversationHistory?: string): Promise<string> {
     try {
-      // 🎯 CRITICAL: Check for pending confirmations FIRST
+      // 🎯 STEP 1: Store user message in conversation history
+      await ConversationHistoryService.addMessage(userId, 'user', message, 'general');
+
+      // 🎯 STEP 2: Check for pending confirmations FIRST
       const [salesConfirmation, financeConfirmation] = await Promise.all([
         ConfirmationService.hasPendingConfirmation(userId, 'sales'),
         ConfirmationService.hasPendingConfirmation(userId, 'finance')
       ]);
 
+      let response: string;
+
       // If user has pending confirmations, route directly to appropriate service
       if (salesConfirmation && this.looksLikeConfirmation(message)) {
-        return await this.salesService.processMessage(userId, message);
-      }
-      if (financeConfirmation && this.looksLikeConfirmation(message)) {
-        return await this.financeService.processMessage(userId, message);
+        response = await this.salesService.processMessage(userId, message, conversationHistory);
+        await ConversationHistoryService.addMessage(userId, 'assistant', response, 'sales');
+      } else if (financeConfirmation && this.looksLikeConfirmation(message)) {
+        response = await this.financeService.processMessage(userId, message, conversationHistory);
+        await ConversationHistoryService.addMessage(userId, 'assistant', response, 'finance');
+      } else {
+        // No pending confirmations - proceed with context-aware processing
+        response = await this.processMessageWithContext(userId, message, conversationHistory);
+        
+        // 🎯 NEW: Extract context from AI response (no more guessing!)
+        const jsonResponse = extractJsonPayload(response);
+        const aiContext = jsonResponse.context || 'general';
+        await ConversationHistoryService.addMessage(userId, 'assistant', response, aiContext);
       }
 
-      // No pending confirmations or doesn't look like confirmation - proceed normally
+      return response;
+
+    } catch (error) {
+      const errorResponse = this.logError(error, 'Conversational AI', userId);
+      
+      // Store error response in history too
+      await ConversationHistoryService.addMessage(userId, 'assistant', errorResponse, 'general');
+      
+      return errorResponse;
+    }
+  }
+
+  // 🎯 Implement the abstract method from BaseAIService
+  protected async processWithEnhancedContext(
+    userId: string,
+    message: string,
+    entityContext: EntityContext,
+    conversationHistory?: string
+  ): Promise<string> {
+    try {
       const setupState = await this.userService.getSetupState(userId);
       const user = await prisma.user.findUnique({ where: { id: userId } });
 
       const providerName = this.getProviderName();
-      const prompt = this.buildContextualPrompt(user, setupState, providerName);
+      
+      // Add all context sources
+      let contextualInfo = `\n\n=== RETRIEVED CONTEXT ===\n${entityContext.context}\n=== END CONTEXT ===\n`;
+      
+      if (conversationHistory) {
+        contextualInfo = `\n\n=== CONVERSATION HISTORY ===\n${conversationHistory}\n${contextualInfo}`;
+      }
+      
+      const prompt = this.buildContextualPrompt(user, setupState, providerName) + contextualInfo;
+      
       const aiResponse = await this.aiProvider.generateResponse(prompt, message);
-
       return await this.processAIResponse(userId, aiResponse, message);
 
     } catch (error) {
-      return this.logError(error, 'Conversational AI', userId);
+      log.error('Enhanced context processing failed, falling back', { error, userId: userId.substring(0, 8) });
+      // Fallback to normal processing
+      return await this.processNormalMessage(userId, message, conversationHistory);
     }
+  }
+
+  // 🎯 Enhanced normal processing with conversation history
+  protected async processNormalMessage(userId: string, message: string, conversationHistory?: string): Promise<string> {
+    const setupState = await this.userService.getSetupState(userId);
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    
+    const providerName = this.getProviderName();
+    let prompt = this.buildContextualPrompt(user, setupState, providerName);
+    
+    // Add conversation history if available
+    if (conversationHistory) {
+      prompt += `\n\n=== CONVERSATION HISTORY ===\n${conversationHistory}\n=== END HISTORY ===\n`;
+    }
+    
+    const aiResponse = await this.aiProvider.generateResponse(prompt, message);
+    return await this.processAIResponse(userId, aiResponse, message);
   }
 
   // 🎯 ENHANCED: Better confirmation detection to avoid conflicts
@@ -60,7 +122,7 @@ export class ConversationalAIService extends BaseAIService {
     const trimmedMessage = message.trim();
     
     return confirmationPatterns.some(pattern => pattern.test(trimmedMessage)) && 
-           trimmedMessage.length < 25; // Slightly more lenient but still restrictive
+           trimmedMessage.length < 25;
   }
 
   private buildContextualPrompt(user: any, setupState: any, providerName: string): string {
@@ -79,6 +141,19 @@ CRITICAL SETUP EXTRACTION RULES:
 - Clean usernames: lowercase, replace spaces with underscores, remove special chars
 
 IMPORTANT: Do NOT handle confirmation responses like "yes", "no", "update", "show" - these are handled by specialized services.
+
+CONVERSATION CONTINUITY:
+- Use conversation history to maintain context and avoid repetition
+- Reference previous discussions naturally
+- Build on past conversations to provide better assistance
+- Remember user preferences and patterns from history
+
+CONTEXT CLASSIFICATION:
+- ALWAYS include "context" field in your JSON response
+- Set context to "general" for setup, chat, help
+- Set context to "sales" when routing to sales tool
+- Set context to "finance" when routing to finance tool
+- This helps categorize conversations for analytics and history
 
 Current Status Context:
 ${setupState.hasUsername ? 'User already has username set' : 'NEEDS USERNAME - extract from their message'}
@@ -108,9 +183,12 @@ ${setupState.hasName ? 'User already has name set' : 'May need name after userna
   private async handleToolCalls(userId: string, toolCalls: any[], originalMessage: string): Promise<string[]> {
     if (!toolCalls?.length) return [];
 
+    // 🎯 NEW: Get conversation history for services
+    const conversationHistory = await ConversationHistoryService.getContextMessages(userId, 8);
+
     const results: string[] = [];
     for (const toolCall of toolCalls) {
-      const result = await this.executeTool(userId, toolCall, originalMessage);
+      const result = await this.executeTool(userId, toolCall, originalMessage, conversationHistory);
       if (result) {
         results.push(result);
       }
@@ -222,13 +300,13 @@ ${setupState.hasName ? 'User already has name set' : 'May need name after userna
     await this.userService.updateNotificationPreferences(userId, updates);
   }
 
-  private async executeTool(userId: string, toolCall: any, originalMessage: string): Promise<string> {
+  private async executeTool(userId: string, toolCall: any, originalMessage: string, conversationHistory?: string): Promise<string> {
     try {
       switch (toolCall.tool) {
         case 'sales':
-          return await this.salesService.processMessage(userId, originalMessage);
+          return await this.salesService.processMessage(userId, originalMessage, conversationHistory);
         case 'finance':
-          return await this.financeService.processMessage(userId, originalMessage);
+          return await this.financeService.processMessage(userId, originalMessage, conversationHistory);
         default:
           return '';
       }

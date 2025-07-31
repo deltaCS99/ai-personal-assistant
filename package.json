@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "db:push": "npx prisma db push",
-    "db:generate": "npx prisma generate",
+    "db:generate": "npx prisma generate --no-engine",
     "setup": "npm run db:push && npm run db:generate",
     "notifications": "tsx src/scripts/run-notifications.ts",
     "webhook:setup": "tsx src/scripts/webhook-setup.ts",

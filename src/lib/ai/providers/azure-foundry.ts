@@ -8,7 +8,6 @@ export class AzureFoundryProvider extends BaseAIProvider {
   name = 'azure-foundry';
   private readonly client: AzureOpenAI;
   private readonly deploymentName: string;
-  private readonly modelName: string;
 
   constructor(apiKey: string, deploymentName?: string) {
     super();
@@ -16,12 +15,12 @@ export class AzureFoundryProvider extends BaseAIProvider {
     const apiVersion = process.env.AZURE_FOUNDRY_API_VERSION || '2024-04-01-preview';
 
     this.deploymentName = deploymentName || 'gpt-4o-mini';
-    this.modelName = this.deploymentName; // modelName usually matches deployment
+
     this.client = new AzureOpenAI({
       apiKey,
       endpoint,
+      apiVersion,
       deployment: this.deploymentName,
-      apiVersion
     });
   }
 
@@ -31,11 +30,11 @@ export class AzureFoundryProvider extends BaseAIProvider {
       const userPrompt = this.formatUserMessage(userMessage);
 
       const response = await this.client.chat.completions.create({
+        model: this.deploymentName,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        model: this.modelName,
         max_tokens: 2000,
         temperature: 0.7,
         top_p: 0.95

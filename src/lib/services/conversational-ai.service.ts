@@ -1,5 +1,5 @@
 // ===============================
-// src/lib/services/conversational-ai.service.ts
+// src/lib/services/conversational-ai.service.ts - COMPLETE WITH FIXES
 // ===============================
 import { PromptFactory } from '@/lib/ai/prompts/factory';
 import { UserService } from './user.service';
@@ -30,23 +30,26 @@ export class ConversationalAIService extends BaseAIService {
       ]);
 
       let response: string;
+      let responseContext: 'sales' | 'finance' | 'general' = 'general';
 
       // If user has pending confirmations, route directly to appropriate service
       if (salesConfirmation && this.looksLikeConfirmation(message)) {
         response = await this.salesService.processMessage(userId, message, conversationHistory);
-        await ConversationHistoryService.addMessage(userId, 'assistant', response, 'sales');
+        responseContext = 'sales';
       } else if (financeConfirmation && this.looksLikeConfirmation(message)) {
         response = await this.financeService.processMessage(userId, message, conversationHistory);
-        await ConversationHistoryService.addMessage(userId, 'assistant', response, 'finance');
+        responseContext = 'finance';
       } else {
         // No pending confirmations - proceed with context-aware processing
         response = await this.processMessageWithContext(userId, message, conversationHistory);
         
-        // 🎯 NEW: Extract context from AI response (no more guessing!)
+        // 🎯 NEW: Extract context from AI response
         const jsonResponse = extractJsonPayload(response);
-        const aiContext = jsonResponse.context || 'general';
-        await ConversationHistoryService.addMessage(userId, 'assistant', response, aiContext);
+        responseContext = jsonResponse.context || 'general';
       }
+
+      // Store AI response with determined context
+      await ConversationHistoryService.addMessage(userId, 'assistant', response, responseContext);
 
       return response;
 
@@ -154,6 +157,17 @@ CONTEXT CLASSIFICATION:
 - Set context to "sales" when routing to sales tool
 - Set context to "finance" when routing to finance tool
 - This helps categorize conversations for analytics and history
+
+CRITICAL JSON REQUIREMENT:
+- You MUST ALWAYS return valid JSON in the specified format
+- NEVER return plain text responses
+- If you're having trouble with JSON, wrap your response like this:
+{
+  "response": "your actual response here",
+  "context": "general",
+  "setupActions": [],
+  "toolCalls": []
+}
 
 Current Status Context:
 ${setupState.hasUsername ? 'User already has username set' : 'NEEDS USERNAME - extract from their message'}

@@ -7,7 +7,7 @@ import { FINANCE_PROMPT_TEMPLATE } from './finance';
 import { MORNING_DIGEST_PROMPT_TEMPLATE, EVENING_SUMMARY_PROMPT_TEMPLATE } from './notification-prompts';
 import { format, isWeekend } from 'date-fns';
 
-type ProviderName = 'gemini' | 'claude' | 'openai';
+type ProviderName = 'gemini' | 'claude' | 'openai' | 'azure-foundry';
 
 interface ProviderConfig {
   instructions: string;
@@ -422,7 +422,13 @@ CURRENT DATETIME CONTEXT:
         instructions: 'IMPORTANT: Respond with ONLY the JSON format. No explanations or additional text.',
         jsonEmphasis: 'Focus on accurate responses while maintaining strict JSON output.',
         finalReminder: 'OUTPUT ONLY JSON.'
+      },
+      'azure-foundry': {
+        instructions: 'CRITICAL: Return ONLY a valid JSON object. No text, markdown, or explanation before or after.',
+        jsonEmphasis: 'The response MUST be a strict JSON object with keys: response, context, setupActions, toolCalls. No plain strings.',
+        finalReminder: 'ALWAYS respond with well-formed JSON. No other output.'
       }
+
     };
 
     return configs[provider] || configs.gemini;
@@ -445,6 +451,11 @@ CURRENT DATETIME CONTEXT:
         instructions: 'Generate an engaging, supportive notification that motivates action and provides clear value.',
         jsonEmphasis: 'Be positive and specific while maintaining a conversational tone.',
         finalReminder: 'Create a message that users look forward to receiving.'
+      },
+      'azure-foundry': {
+        instructions: 'Create a helpful and supportive notification message that feels natural and motivating.',
+        jsonEmphasis: 'Be concise, clear, and friendly in tone.',
+        finalReminder: 'Make sure the message is positive and easy to read.'
       }
     };
 

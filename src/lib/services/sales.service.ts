@@ -660,11 +660,40 @@ Return false unless it's clearly asking for OVERALL performance metrics.
     }
   }
 
-  private async createLead(userId: string, name: string, updates: LeadUpdate['updates'] = {}) {
+  private async createLead(
+    userId: string,
+    name: string,
+    updates: LeadUpdate['updates'] = {}
+  ) {
     // First check for exact matches
     const exactMatch = await this.findExistingLead(userId, name, updates.phone);
 
     if (exactMatch) {
+      let updatedNotes = exactMatch.notes;
+
+      if (updates.notes) {
+        if (exactMatch.notes) {
+          // Avoid duplicate notes (case insensitive check)
+          const existingNotesLower = exactMatch.notes.toLowerCase();
+          const newNoteLower = updates.notes.toLowerCase();
+
+          if (!existingNotesLower.includes(newNoteLower)) {
+            const timestamp = new Date().toLocaleString('en-ZA', {
+              timeZone: 'Africa/Johannesburg',
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+            updatedNotes = `${exactMatch.notes}\n\n[${timestamp}] ${updates.notes}`;
+          }
+        } else {
+          // First note
+          updatedNotes = updates.notes;
+        }
+      }
+
       const updatedLead = await prisma.lead.update({
         where: { id: exactMatch.id },
         data: {
@@ -675,15 +704,11 @@ Return false unless it's clearly asking for OVERALL performance metrics.
           ...(updates.status && { status: updates.status }),
           ...(updates.nextStep && { nextStep: updates.nextStep }),
           ...(updates.nextFollowup && { nextFollowup: new Date(updates.nextFollowup) }),
-          ...(updates.notes && {
-            notes: exactMatch.notes
-              ? `${exactMatch.notes}\n\n${updates.notes}`
-              : updates.notes
-          }),
+          ...(updatedNotes && { notes: updatedNotes }),
         },
       });
 
-      return { action: 'create', lead: updatedLead, wasExisting: true };
+      return { action: 'update', lead: updatedLead, wasExisting: true };
     }
 
     // AI duplicate detection
@@ -730,6 +755,7 @@ Return false unless it's clearly asking for OVERALL performance metrics.
       duplicateCheck
     };
   }
+
 
   private formatDuplicateConfirmation(duplicateCheck: DuplicateDetection, proposedLead: { name: string;[key: string]: any }): string {
     let message = `🤔 **Potential Duplicate Detected!**\n\n`;
